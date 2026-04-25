@@ -1,0 +1,6 @@
+{
+  "name": "Antigravity Mini",
+  "description": "An AI-native IDE prototype featuring a code editor, file explorer, and Gemini-powered assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
