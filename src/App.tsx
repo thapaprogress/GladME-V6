@@ -15,9 +15,11 @@ import {
   X,
   Monitor,
   CheckCircle2,
-  RotateCcw
+  RotateCcw,
+  Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { PreviewCanvas } from './components/PreviewCanvas';
 
 type SidebarView = 'explorer' | 'search' | 'git';
 
@@ -235,6 +237,7 @@ export default function App() {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<'editor' | 'preview'>('editor');
 
   const menuData: Record<string, { label: string; action?: () => void; shortcut?: string }[]> = {
     'File': [
@@ -572,13 +575,35 @@ export default function App() {
         {/* 4. MAIN EDITOR & PANEL */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-[2] flex flex-col min-h-0">
-            <Editor 
-              activeFile={activeFile} 
-              openFiles={openFiles} 
-              onCloseFile={handleCloseFile} 
-              onFileSelect={handleFileSelect} 
-              onContentChange={handleContentChange} 
-            />
+            <div className="flex h-9 bg-[#1a1a1a] border-b border-[#2b2b2b] items-center">
+              <div 
+                onClick={() => setActiveTab('editor')}
+                className={`px-4 h-full flex items-center text-[11px] cursor-pointer border-r border-[#2b2b2b] transition-colors ${activeTab === 'editor' ? 'bg-[#181818] text-white border-t-2 border-t-blue-500' : 'text-zinc-500 hover:bg-[#252525]'}`}
+              >
+                Editor
+              </div>
+              <div 
+                onClick={() => setActiveTab('preview')}
+                className={`px-4 h-full flex items-center text-[11px] cursor-pointer border-r border-[#2b2b2b] transition-colors ${activeTab === 'preview' ? 'bg-[#181818] text-white border-t-2 border-t-blue-500' : 'text-zinc-500 hover:bg-[#252525]'}`}
+              >
+                <Monitor size={12} className="mr-1.5" /> Preview Canvas
+              </div>
+            </div>
+
+            {activeTab === 'editor' ? (
+              <Editor 
+                activeFile={activeFile} 
+                openFiles={openFiles} 
+                onCloseFile={handleCloseFile} 
+                onFileSelect={handleFileSelect} 
+                onContentChange={handleContentChange} 
+              />
+            ) : (
+              <PreviewCanvas 
+                content={activeFile?.content || ''} 
+                language={activeFile?.language || 'text'} 
+              />
+            )}
           </div>
 
           {/* 5. BOTTOM PANEL */}

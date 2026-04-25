@@ -36,6 +36,10 @@ def run_tool(req: ToolRequest):
                 return {"files": os.listdir(path)}
             return {"error": "Directory not found"}
 
+        elif tool == "list_ports":
+            from mcp.skills.hardware import list_hardware_ports
+            return {"ports": list_hardware_ports()}
+
         elif tool == "run_command":
             result = subprocess.run(args["command"], shell=True, capture_output=True, text=True)
             return {
