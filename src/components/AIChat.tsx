@@ -6,7 +6,12 @@ import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 
 interface AIChatProps {
   activeFile: FileNode | null;
+  files: FileNode[];
   onCodeUpdate?: (id: string, content: string) => void;
+  onAIWorkingChange?: (isWorking: boolean) => void;
+  onCreateFile?: (parentId: string, name: string, content: string) => void;
+  onMkdir?: (parentId: string, name: string) => void;
+  onDeleteFile?: (id: string) => void;
 }
 
 const updateFileTool: FunctionDeclaration = {
@@ -28,11 +33,62 @@ const updateFileTool: FunctionDeclaration = {
   },
 };
 
-export const AIChat: React.FC<AIChatProps> = ({ activeFile, onCodeUpdate }) => {
+const mkdirTool: FunctionDeclaration = {
+  name: "mkdir",
+  description: "Creates a new folder in the workspace.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      parentId: {
+        type: Type.STRING,
+        description: "The ID of the parent folder. Use 'root' for the root directory.",
+      },
+      name: {
+        type: Type.STRING,
+        description: "The name of the new folder.",
+      }
+    },
+    required: ["parentId", "name"],
+  },
+};
+
+const createFileTool: FunctionDeclaration = {
+  name: "create_file",
+  description: "Creates a new file in the workspace.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      parentId: {
+        type: Type.STRING,
+        description: "The ID of the parent folder. Use 'root' for the root directory.",
+      },
+      name: {
+        type: Type.STRING,
+        description: "The name of the new file.",
+      },
+      content: {
+        type: Type.STRING,
+        description: "The initial content of the file.",
+      }
+    },
+    required: ["parentId", "name", "content"],
+  },
+};
+
+export const AIChat: React.FC<AIChatProps> = ({ 
+  activeFile, 
+  files,
+  onCodeUpdate, 
+  onAIWorkingChange,
+  onCreateFile,
+  onMkdir,
+  onDeleteFile
+}) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [thoughts, setThoughts] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -41,7 +97,7 @@ export const AIChat: React.FC<AIChatProps> = ({ activeFile, onCodeUpdate }) => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isThinking]);
+  }, [messages, isThinking, thoughts]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -56,64 +112,146 @@ export const AIChat: React.FC<AIChatProps> = ({ activeFile, onCodeUpdate }) => {
     setInput('');
     setIsLoading(true);
     setIsThinking(true);
+    onAIWorkingChange?.(true);
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const model = ai.models.get('gemini-3-flash-preview');
       
-      const prompt = `
-        You are "Antigravity AI", a state-of-the-art agentic coding assistant connected to an IDE.
+      // PROJECT AWARENESS: Map the current structure for the AI
+      const fileTreeStr = JSON.stringify(files.map(f => ({ 
+        id: f.id, 
+        name: f.name, 
+        type: f.type, 
+        parentId: f.parentId || 'root' 
+      })), null, 2);
+
+      // --- 🧭 PHASE 1: PLANNER (Architect) ---
+      setThoughts(['🧭 Planner: Analyzing workspace & planning steps...']);
+      const planPrompt = `
+        You are a senior software architect (Planner Agent).
+        
+        User Request: "${input}"
+        
+        Project Structure:
+        ${fileTreeStr}
+
+        Your job:
+        1. Understand user intent.
+        2. Break the task into structured steps.
+        3. Decide exactly which files/folders to create or modify.
+        
+        Rules:
+        - Output ONLY a JSON plan.
+        - Use existing folder IDs if they match the path.
+        - Steps should be logical (folders before files).
+        
+        Plan Format:
+        {
+          "goal": "Brief summary",
+          "steps": [
+            { "action": "mkdir", "parentId": "root_or_id", "name": "folder_name" },
+            { "action": "create_file", "parentId": "id", "name": "file.js", "content": "initial code" },
+            { "action": "update_file", "id": "id", "description": "Update existing file" }
+          ]
+        }
+      `;
+      const planResponse = await model.generateContent(planPrompt);
+      const plan = planResponse.text || '{}';
+      setThoughts(prev => [...prev, '🧭 Plan finalized. Building...']);
+
+      // --- 💻 PHASE 2: CODER (Executor) ---
+      setThoughts(prev => [...prev, '💻 Coder: Generating code and calling tools...']);
+      const coderPrompt = `
+        You are a Coding Agent with full filesystem access.
+        
+        Execution Plan:
+        ${plan}
+        
+        Your job:
+        - Execute every step in the plan.
+        - Use tools (mkdir, create_file, update_file).
+        - Write high-quality, production-ready code.
+        
         Context:
-        File: ${activeFile?.name || 'Workspace'}
-        Language: ${activeFile?.language || 'Unknown'}
-        Current Content:
-        ${activeFile?.content || ''}
-        
-        Guidelines:
-        1. If the user asks for a code change, use the 'update_file' tool.
-        2. If you use the tool, provide a clear explanation in the 'explanation' field.
-        3. For chat responses, be technical but punchy.
-        
-        Question: ${input}
+        Active File: ${activeFile?.name || 'None'}
+        Active Content: ${activeFile?.content || ''}
       `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
+      const coderResponse = await model.generateContent({
+        contents: coderPrompt,
         config: {
-          tools: [{ functionDeclarations: [updateFileTool] }]
+          tools: [{ functionDeclarations: [updateFileTool, mkdirTool, createFileTool] }]
         }
       });
 
-      const functionCalls = response.functionCalls;
-      let assistantContent = response.text || '';
+      const functionCalls = coderResponse.functionCalls;
+      let coderFeedback = coderResponse.text || '';
 
       if (functionCalls && functionCalls.length > 0) {
-        const call = functionCalls[0];
-        if (call.name === 'update_file') {
-          const { content, explanation } = call.args as any;
-          if (activeFile && onCodeUpdate) {
-            onCodeUpdate(activeFile.id, content);
+        for (const call of functionCalls) {
+          if (call.name === 'update_file') {
+            const { content, explanation } = call.args as any;
+            onCodeUpdate?.(activeFile?.id || '', content);
+            setThoughts(prev => [...prev, `💻 Refactoring ${activeFile?.name}...`]);
+          } else if (call.name === 'mkdir') {
+            const { parentId, name } = call.args as any;
+            onMkdir?.(parentId || 'root', name);
+            setThoughts(prev => [...prev, `💻 Creating folder "${name}"...`]);
+          } else if (call.name === 'create_file') {
+            const { parentId, name, content } = call.args as any;
+            onCreateFile?.(parentId || 'root', name, content);
+            setThoughts(prev => [...prev, `💻 Synthesizing file "${name}"...`]);
           }
-          assistantContent = explanation;
         }
       }
 
-      const assistantMessage: ChatMessage = {
+      // --- 🔍 PHASE 3: REVIEWER (Audit) ---
+      setThoughts(prev => [...prev, '🔍 Reviewer: Auditing code quality...']);
+      const reviewerPrompt = `
+        You are a strict Code Reviewer.
+        
+        Original Plan: ${plan}
+        Coder Output/Actions: ${coderFeedback}
+        
+        Check:
+        1. File structure correctness.
+        2. Code quality and meaningful content.
+        3. Logical consistency.
+        
+        If perfect, respond: APPROVED
+        Otherwise, provide specific improvement suggestions.
+      `;
+      const reviewResponse = await model.generateContent(reviewerPrompt);
+      const reviewResult = reviewResponse.text || '';
+
+      const isApproved = reviewResult.includes('APPROVED');
+      if (isApproved) {
+        setThoughts(prev => [...prev, '🔍 APPROVED: Validated against plan.']);
+      } else {
+        setThoughts(prev => [...prev, '🔍 REJECTED: Logic errors detected.']);
+      }
+
+      const finalMessage: ChatMessage = {
         role: 'assistant',
-        content: assistantContent || "Request processed.",
+        content: isApproved 
+          ? `Pipeline successful. All tasks verified.\n\n${coderFeedback}`
+          : `Tasks executed but Reviewer flagged issues:\n\n${reviewResult}\n\n${coderFeedback}`,
         timestamp: Date.now(),
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => [...prev, finalMessage]);
     } catch (error) {
       console.error('AI Error:', error);
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: 'Connection issue. Please try again.', timestamp: Date.now() },
+        { role: 'assistant', content: 'Pipeline interrupted. System reset recommended.', timestamp: Date.now() },
       ]);
     } finally {
       setIsLoading(false);
       setIsThinking(false);
+      setThoughts([]);
+      onAIWorkingChange?.(false);
     }
   };
 
@@ -132,73 +270,43 @@ export const AIChat: React.FC<AIChatProps> = ({ activeFile, onCodeUpdate }) => {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
-        <div className="p-4 bg-[#1a1a1a] border border-[#2b2b2b] rounded-md text-[13px] leading-relaxed text-zinc-300">
-           start training, and fix all the errors and use cuda and update mempalace and use caveman
-        </div>
-
-        <div className="space-y-2">
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronDown size={14} className="group-hover:text-blue-400" />
-              <span>Thought for 2s</span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Ran <span className="text-zinc-300">nvidia-smi</span></span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Explored 1 file</span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Ran <span className="text-zinc-300">dir /s /b *.json</span></span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Explored 1 file, 2 folders</span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Ran <span className="text-zinc-300">rfdetr --help</span></span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Checked command status</span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Edited 1 file</span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Ran <span className="text-zinc-300">python prepare_synthetic_data.py</span></span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronRight size={14} />
-              <span>Checked command status</span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 hover:text-zinc-300 cursor-pointer group">
-              <ChevronDown size={14} className="text-blue-400" />
-              <span>Thought for 1s</span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-300 font-bold ml-6">
-              Analyzing <span className="text-emerald-500 underline">config.py</span> #L150-250
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 ml-6">
-              Searched class RFDETRNanoConfig <span className="px-1 bg-zinc-800 rounded text-[10px]">2 results</span>
-           </div>
-           <div className="flex items-center gap-2 text-[12px] text-zinc-500 py-4 italic animate-pulse">
-              Generating..
-           </div>
-        </div>
+        {messages.length === 0 && (
+          <div className="p-4 bg-[#1a1a1a] border border-[#2b2b2b] rounded-md text-[13px] leading-relaxed text-zinc-300">
+             Welcome to Antigravity AI. How can I help you build today?
+          </div>
+        )}
 
         {messages.map((msg, i) => (
           <div key={i} className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-             <div className={`max-w-[90%] p-3 rounded-lg text-[13px] ${msg.role === 'user' ? 'bg-blue-600/20 border border-blue-500/30 text-blue-100' : 'bg-[#1a1a1a] border border-[#2b2b2b] text-zinc-300'}`}>
+             <div className="flex items-center gap-2 text-[10px] text-zinc-500 px-1">
+                {msg.role === 'user' ? <User size={10} /> : <Bot size={10} />}
+                <span>{msg.role === 'user' ? 'You' : 'Antigravity'}</span>
+             </div>
+             <div className={`max-w-[100%] p-3 rounded-lg text-[13px] leading-relaxed ${msg.role === 'user' ? 'bg-blue-600/10 border border-blue-500/20 text-blue-100' : 'bg-[#1a1a1a] border border-[#2b2b2b] text-zinc-300'}`}>
                 {msg.content}
              </div>
           </div>
         ))}
+
+        {isThinking && (
+          <div className="space-y-2">
+             <div className="flex items-center gap-2 text-[12px] text-zinc-500">
+                <Loader2 size={12} className="animate-spin text-blue-400" />
+                <span>AI is thinking...</span>
+             </div>
+             {thoughts.map((thought, idx) => (
+                <motion.div 
+                  initial={{ opacity: 0, x: -5 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  key={idx} 
+                  className="flex items-center gap-2 text-[12px] text-zinc-500 ml-4"
+                >
+                  <ChevronRight size={12} />
+                  <span>{thought}</span>
+                </motion.div>
+             ))}
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
