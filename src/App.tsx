@@ -120,15 +120,25 @@ training:
             children: [
               { id: 'mcp-server-py', name: 'server.py', type: 'file', language: 'python', content: '' },
               { id: 'mcp-client-py', name: 'client.py', type: 'file', language: 'python', content: '' },
+              { id: 'mcp-registry-py', name: 'registry.py', type: 'file', language: 'python', content: '' },
               {
                 id: 'skills-folder',
                 name: 'skills',
                 type: 'folder',
                 children: [
-                  { id: 'filesystem-py', name: 'filesystem.py', type: 'file', language: 'python', content: '' },
-                  { id: 'terminal-py', name: 'terminal.py', type: 'file', language: 'python', content: '' },
+                  { id: 'skills-registry-json', name: 'registry.json', type: 'file', language: 'json', content: '' },
+                  { id: 'skills-router-py', name: 'router.py', type: 'file', language: 'python', content: '' },
                 ]
               }
+            ]
+          },
+          {
+            id: 'ui-folder',
+            name: 'ui',
+            type: 'folder',
+            children: [
+              { id: 'mcp-manager-py', name: 'mcp_manager.py', type: 'file', language: 'python', content: '' },
+              { id: 'skill-manager-py', name: 'skill_manager.py', type: 'file', language: 'python', content: '' },
             ]
           },
           {

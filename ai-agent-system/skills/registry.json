@@ -1,0 +1,19 @@
+{
+  "skills": [
+    {
+      "name": "filesystem",
+      "server": "local",
+      "tools": ["mkdir", "create_file", "read_file", "list_dir"]
+    },
+    {
+      "name": "terminal",
+      "server": "local",
+      "tools": ["run_command"]
+    },
+    {
+      "name": "web",
+      "server": "remote_web",
+      "tools": ["search", "fetch"]
+    }
+  ]
+}
